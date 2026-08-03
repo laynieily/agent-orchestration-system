@@ -63,8 +63,8 @@ def web_search(query: str, max_results: int = 5) -> list[dict[str, str]]:
                 continue
 
             results.append({
-                "title": title_el.get_text(strp=True),
-                "snippet": snippet_el.get_text(Strip=True),
+                "title": title_el.get_text(strip=True),
+                "snippet": snippet_el.get_text(strip=True),
                 "url": link_el.get("href", ""),
             })
 
@@ -175,7 +175,7 @@ def _get_demo_conn() -> sqlite3.Connection:
 
 
 def db_query(query: str) -> list[dict[str, Any]]:
-    q = query.strip().lower().startswith("select")
+    q = query.strip().lower()
     if not q.startswith("select"):
         raise ValueError("db_query only supports SELECT statements.")
     
