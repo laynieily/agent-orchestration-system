@@ -25,7 +25,7 @@ class Complexity(str, Enum):
 class SpecialistName(str, Enum):
     RESEARCHER = "researcher"
     DATA_ANALYSIS = "data analyst"
-    WRITING = "writer"
+    WRITER = "writer"
     CODE_EXECUTION = "code executioner"
 
 #creating subtasks

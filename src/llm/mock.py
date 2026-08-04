@@ -66,26 +66,26 @@ def _mock_plan(prompt_text: str) -> ExecutionPlan:
 
     research = SubTask(
         description=f"Gather background information for: {request_text[:150]}",
-        assigned_specialist=SpecialistName.research,
+        assigned_specialist=SpecialistName.RESEARCHER,
         required_inputs=["original request"],
         expected_output_format="A short list of findings with sources.",
-        estimated_complexity=Complexity.medium,
+        estimated_complexity=Complexity.MEDIUM,
     )
     analysis = SubTask(
         description="Analyze the research findings and extract key insights.",
-        assigned_specialist=SpecialistName.data_analysis,
+        assigned_specialist=SpecialistName.DATA_ANALYSIS,
         required_inputs=[research.id],
         depends_on=[research.id],
         expected_output_format="A few bullet-point insights.",
-        estimated_complexity=Complexity.medium,
+        estimated_complexity=Complexity.MEDIUM,
     )
     writing = SubTask(
         description="Write a final summary combining the research and analysis.",
-        assigned_specialist=SpecialistName.writing,
+        assigned_specialist=SpecialistName.WRITER,
         required_inputs=[research.id, analysis.id],
         depends_on=[research.id, analysis.id],
         expected_output_format="A polished short-form written summary.",
-        estimated_complexity=Complexity.low,
+        estimated_complexity=Complexity.LOW,
     )
     return ExecutionPlan(
         original_request=request_text,
