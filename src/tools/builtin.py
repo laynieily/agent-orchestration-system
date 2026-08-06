@@ -232,7 +232,7 @@ def build_default_registry() -> ToolRegistry:
         description="DuckDuckGo HTML search scraper",
         func=web_search,
         input_schema=WebSearchInput,
-        allowed_agents=["research"],
+        allowed_agents=["researcher"],
         rate_limit_per_minute=15,
     ))
 
