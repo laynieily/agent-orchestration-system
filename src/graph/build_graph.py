@@ -29,11 +29,14 @@ from src.graph.state import OrchestratorState
 from src.schemas.models import ApprovalLevel, EscalationEvent, SpecialistResult
 from src.tools.registry import ToolRegistry
 
+from src.memory.working_memory import WorkingMemoryStore
+
+
 PLAN_CONFIDENCE_THRESHOLD = float(os.getenv("PLAN_CONFIDENCE_THRESHOLD", "0.6"))
 MAX_SUBTASK_RETRIES = int(os.getenv("MAX_SUBTASK_RETRIES", "2"))
 
 
-def build_graph(tools: ToolRegistry, planner_llm, specialist_llm, reviewer_llm):
+def build_graph(tools: ToolRegistry, memory: WorkingMemoryStore, planner_llm, specialist_llm, reviewer_llm):
     supervisor = SupervisorAgent(planner_llm)
     reviewer = ReviewerAgent(reviewer_llm)
 
@@ -53,6 +56,7 @@ def build_graph(tools: ToolRegistry, planner_llm, specialist_llm, reviewer_llm):
 
     def planning(state: OrchestratorState) -> dict:
         plan = supervisor.create_plan(state["original_request"])
+        memory.set(plan.task_id, "plan", plan.model_dump())
         return {
             "plan": plan, 
             "task_id": plan.task_id, 
@@ -113,9 +117,11 @@ def build_graph(tools: ToolRegistry, planner_llm, specialist_llm, reviewer_llm):
         if review_result.approved:
             completed = dict(state.get("completed", {}))
             completed[subtask.id] = result
+            memory.append_log(plan.task_id, "completed subtasks", subtask.id)
             return {"reviews": reviews, "completed": completed}
         
         #rejected
+        memory.append_log(plan.task_id, "error logs", review_result.feedback)
         retries = dict(state.get("retries", {}))
         retries[subtask.id] = retries.get(subtask.id, 0) + 1
         return {"reviews": reviews, "retries": retries}
@@ -141,6 +147,7 @@ def build_graph(tools: ToolRegistry, planner_llm, specialist_llm, reviewer_llm):
             resolution="auto",
             resolution_notes="Phase 1 stub: auto-accepted best effort result.",
         ) 
+        memory.append_log(plan.task_id, "error_logs", f"Escalated: {event.reason}")
         
         completed = dict(state.get("completed", {}))
         completed[subtask_id] = last_result
@@ -153,6 +160,7 @@ def build_graph(tools: ToolRegistry, planner_llm, specialist_llm, reviewer_llm):
         return {"final_output": final, "status": "done"}
 
     def delivery(state: OrchestratorState) -> dict:
+        memory.clear(state["plan"].task_id)
         return {}
 
     # routing functions
@@ -227,8 +235,8 @@ def build_graph(tools: ToolRegistry, planner_llm, specialist_llm, reviewer_llm):
     return graph.compile()
 
 
-def run_task(request: str, tools: ToolRegistry, planner_llm, specialist_llm, reviewer_llm,
+def run_task(request: str, tools: ToolRegistry, memory: WorkingMemoryStore, planner_llm, specialist_llm, reviewer_llm,
              recursion_limit: int = 50) -> OrchestratorState:
-    app = build_graph(tools, planner_llm, specialist_llm, reviewer_llm)
+    app = build_graph(tools, memory, planner_llm, specialist_llm, reviewer_llm)
     initial: OrchestratorState = {"original_request": request}
     return app.invoke(initial, config={"recursion_limit": recursion_limit})
