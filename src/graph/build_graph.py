@@ -36,9 +36,13 @@ PLAN_CONFIDENCE_THRESHOLD = float(os.getenv("PLAN_CONFIDENCE_THRESHOLD", "0.6"))
 MAX_SUBTASK_RETRIES = int(os.getenv("MAX_SUBTASK_RETRIES", "2"))
 
 
-def build_graph(tools: ToolRegistry, memory: WorkingMemoryStore, planner_llm, specialist_llm, reviewer_llm):
-    supervisor = SupervisorAgent(planner_llm)
+from src.memory.long_term_memory import LongTermMemoryStore
+
+def build_graph(tools: ToolRegistry, memory: WorkingMemoryStore, long_term_memory: LongTermMemoryStore,
+                 planner_llm, specialist_llm, reviewer_llm):
+    supervisor = SupervisorAgent(planner_llm, memory_query_fn=long_term_memory.query_similar)
     reviewer = ReviewerAgent(reviewer_llm)
+
 
     # ---- nodes ----------------------------------------------------------
     # Each node takes the current state dict and returns a dict of ONLY the
@@ -160,7 +164,24 @@ def build_graph(tools: ToolRegistry, memory: WorkingMemoryStore, planner_llm, sp
         return {"final_output": final, "status": "done"}
 
     def delivery(state: OrchestratorState) -> dict:
-        memory.clear(state["plan"].task_id)
+        plan = state["plan"]
+        # Collect tool names
+        tools_used = sorted ({
+            tc.tool_name
+            for r in state.get("completed", {}).values()
+            for tc in r.tool_calls
+        })
+        # decide success 
+        success = not state.get("escalations")
+
+        long_term_memory.record_task(
+            task_id=plan.task_id,
+            original_request=plan.original_request,
+            final_output=state.get("final_output", ""),
+            tools_used=tools_used,
+            success=success,
+        )
+        memory.clear(plan.task_id)
         return {}
 
     # routing functions
@@ -235,8 +256,8 @@ def build_graph(tools: ToolRegistry, memory: WorkingMemoryStore, planner_llm, sp
     return graph.compile()
 
 
-def run_task(request: str, tools: ToolRegistry, memory: WorkingMemoryStore, planner_llm, specialist_llm, reviewer_llm,
+def run_task(request: str, tools: ToolRegistry, memory: WorkingMemoryStore, long_term_memory: LongTermMemoryStore, planner_llm, specialist_llm, reviewer_llm,
              recursion_limit: int = 50) -> OrchestratorState:
-    app = build_graph(tools, memory, planner_llm, specialist_llm, reviewer_llm)
+    app = build_graph(tools, memory, long_term_memory, planner_llm, specialist_llm, reviewer_llm)
     initial: OrchestratorState = {"original_request": request}
     return app.invoke(initial, config={"recursion_limit": recursion_limit})
