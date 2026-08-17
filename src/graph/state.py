@@ -16,6 +16,9 @@ class OrchestratorState(TypedDict, total=False):
 
     current_subtask_id: Optional[str]
 
+    plan_approved: Optional[bool]
+    subtask_aborted: Optional[bool]
+
     #holds the result produced by a specialist BEFORE review
     pending_result: Optional[SpecialistResult]
     # all complelted specialist results

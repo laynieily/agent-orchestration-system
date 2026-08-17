@@ -30,6 +30,10 @@ from src.schemas.models import ApprovalLevel, EscalationEvent, SpecialistResult
 from src.tools.registry import ToolRegistry
 
 from src.memory.working_memory import WorkingMemoryStore
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import interrupt, Command
+
+import time
 
 
 PLAN_CONFIDENCE_THRESHOLD = float(os.getenv("PLAN_CONFIDENCE_THRESHOLD", "0.6"))
@@ -75,11 +79,25 @@ def build_graph(tools: ToolRegistry, memory: WorkingMemoryStore, long_term_memor
             reason=f"Plan confidence {plan.confidence} < threshold {PLAN_CONFIDENCE_THRESHOLD}",
             level= ApprovalLevel.APPROVE_PLAN,
             context={"plan": plan.model_dump()},
-            resolution="auto",
-            resolution_notes="Phase 1 stub: auto-approved plan despite low confidence.",
         )
-        return { "escalations": state.get("escalations", []) + [event] }
-    
+
+        decision = interrupt(event.model_dump())
+
+        resolved_event = event.model_copy(update={
+            "resolution": "approved" if decision.get("approved") else "rejected",
+            "resolution_notes": decision.get("notes", ""),
+            "resolved_at": time.time(),
+        })
+        return {
+            "escalations": state.get("escalations", []) + [resolved_event],
+            "plan_approved": decision.get("approved", False),
+            }
+        
+
+    def route_after_escalate_subtask(state: OrchestratorState) -> Literal["dispatch", "delivery"]:
+        return "delivery" if state.get("subtask_aborted") else "dispatch"
+        
+            
 
     def dispatch(state: OrchestratorState) -> dict:
         plan = state["plan"]
@@ -148,16 +166,48 @@ def build_graph(tools: ToolRegistry, memory: WorkingMemoryStore, long_term_memor
                 "last_output": last_result.output,
                 "last_feedback": last_review.feedback,
             },
-            resolution="auto",
-            resolution_notes="Phase 1 stub: auto-accepted best effort result.",
         ) 
-        memory.append_log(plan.task_id, "error_logs", f"Escalated: {event.reason}")
-        
-        completed = dict(state.get("completed", {}))
-        completed[subtask_id] = last_result
+        # HUMAN DECISION
 
-        return {"completed": completed, "current_subtask_id": None, "escalations": state.get("escalations", []) + [event]}
-        
+        decision = interrupt(event.model_dump())
+        action = decision.get("action")
+
+        if action == "accept":
+            result = last_result
+
+        elif action == "take_over":
+            result = SpecialistResult(
+                subtask_id=subtask_id,
+                specialist=subtask.assigned_specialist,
+                output=decision.get("output", ""),
+                success=True,
+                tool_calls=[],
+            )
+        else:
+            result= last_result
+
+        # resolved event 
+        resolved_event = event.model_copy(update={
+            "resolution": action,
+            "resolution_notes" : decision.get("notes", ""),
+            "resolved_at": time.time(),
+        })
+
+        #log escalation
+        memory.append_log(plan.task_id, "error_logs", f"Escalated: {event.reason}")
+
+        #build the return state
+        completed = dict(state.get("completed", {}))
+        if result is not None:
+            completed[subtask_id] = result
+
+        return {
+            "completed": completed,
+            "current_subtask_id": None,
+            "escalations": state.get("escalations", []) + [resolved_event],
+            "subtask_aborted": action == "abort",
+        }
+
 
     def synthesis(state: OrchestratorState) -> dict:
         final = supervisor.synthesize(state["plan"], state.get("completed", {}))
@@ -201,6 +251,8 @@ def build_graph(tools: ToolRegistry, memory: WorkingMemoryStore, long_term_memor
         if review_result.approved: return "dispatch"
         if state["retries"].get(subtask_id, 0) >= MAX_SUBTASK_RETRIES: return "escalate_subtask"
         return "specialist_exec"
+
+
     
 
     # graph assembly 
@@ -228,7 +280,7 @@ def build_graph(tools: ToolRegistry, memory: WorkingMemoryStore, long_term_memor
         },
     )
 
-    graph.add_edge("escalate_plan", "dispatch")
+    graph.add_conditional_edges("escalate_plan", route_after_escalate_subtask, {"dispatch": "dispatch", "delivery": "delivery"})
     graph.add_conditional_edges(
             "dispatch",
             route_after_dispatch, {
@@ -249,15 +301,16 @@ def build_graph(tools: ToolRegistry, memory: WorkingMemoryStore, long_term_memor
         },
     )
 
-    graph.add_edge("escalate_subtask", "dispatch")
+    graph.add_conditional_edges("escalate_subtask", route_after_escalate_subtask, {"dispatch": "dispatch", "delivery": "delivery"})
     graph.add_edge("synthesis", "delivery")
     graph.add_edge("delivery", END)
 
-    return graph.compile()
+    return graph.compile(checkpointer=MemorySaver())
 
 
-def run_task(request: str, tools: ToolRegistry, memory: WorkingMemoryStore, long_term_memory: LongTermMemoryStore, planner_llm, specialist_llm, reviewer_llm,
-             recursion_limit: int = 50) -> OrchestratorState:
+def run_task(request: str, tools: ToolRegistry, memory: WorkingMemoryStore, long_term_memory: LongTermMemoryStore,
+             planner_llm, specialist_llm, reviewer_llm, thread_id: str, recursion_limit: int = 50):
     app = build_graph(tools, memory, long_term_memory, planner_llm, specialist_llm, reviewer_llm)
     initial: OrchestratorState = {"original_request": request}
-    return app.invoke(initial, config={"recursion_limit": recursion_limit})
+    config = {"configurable": {"thread_id": thread_id}, "recursion_limit": recursion_limit}
+    return app, app.invoke(initial, config=config)
