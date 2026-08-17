@@ -44,7 +44,7 @@ from src.memory.long_term_memory import LongTermMemoryStore
 
 def build_graph(tools: ToolRegistry, memory: WorkingMemoryStore, long_term_memory: LongTermMemoryStore,
                  planner_llm, specialist_llm, reviewer_llm):
-    supervisor = SupervisorAgent(planner_llm, memory_query_fn=long_term_memory.query_similar)
+    supervisor = SupervisorAgent(planner_llm, memory_query_fn=long_term_memory.as_planning_context)
     reviewer = ReviewerAgent(reviewer_llm)
 
 
@@ -91,11 +91,12 @@ def build_graph(tools: ToolRegistry, memory: WorkingMemoryStore, long_term_memor
         return {
             "escalations": state.get("escalations", []) + [resolved_event],
             "plan_approved": decision.get("approved", False),
+            "status": "running" if decision.get("approved", False) else "plan_rejected",
             }
         
 
-    def route_after_escalate_subtask(state: OrchestratorState) -> Literal["dispatch", "delivery"]:
-        return "delivery" if state.get("subtask_aborted") else "dispatch"
+    def route_after_escalate_plan(state: OrchestratorState) -> Literal["dispatch", "delivery"]:
+        return "dispatch" if state.get("plan_approved") else "delivery"
         
             
 
@@ -183,13 +184,17 @@ def build_graph(tools: ToolRegistry, memory: WorkingMemoryStore, long_term_memor
                 success=True,
                 tool_calls=[],
             )
-        else:
-            result= last_result
 
-        # resolved event 
+        elif action == "abort":
+            result = None
+
+        else:
+            result= last_result # fallback
+
+        # resolved event
         resolved_event = event.model_copy(update={
             "resolution": action,
-            "resolution_notes" : decision.get("notes", ""),
+            "resolution_notes": decision.get("notes", ""),
             "resolved_at": time.time(),
         })
 
@@ -201,12 +206,16 @@ def build_graph(tools: ToolRegistry, memory: WorkingMemoryStore, long_term_memor
         if result is not None:
             completed[subtask_id] = result
 
-        return {
+        update = {
             "completed": completed,
             "current_subtask_id": None,
             "escalations": state.get("escalations", []) + [resolved_event],
             "subtask_aborted": action == "abort",
         }
+        if action == "abort":
+            update["status"] = "aborted"
+
+        return update
 
 
     def synthesis(state: OrchestratorState) -> dict:
@@ -252,6 +261,10 @@ def build_graph(tools: ToolRegistry, memory: WorkingMemoryStore, long_term_memor
         if state["retries"].get(subtask_id, 0) >= MAX_SUBTASK_RETRIES: return "escalate_subtask"
         return "specialist_exec"
 
+    def route_after_escalate_subtask(state: OrchestratorState) -> Literal["dispatch", "delivery"]:
+        return "delivery" if state.get("subtask_aborted") else "dispatch"
+
+
 
     
 
@@ -280,7 +293,7 @@ def build_graph(tools: ToolRegistry, memory: WorkingMemoryStore, long_term_memor
         },
     )
 
-    graph.add_conditional_edges("escalate_plan", route_after_escalate_subtask, {"dispatch": "dispatch", "delivery": "delivery"})
+    graph.add_conditional_edges("escalate_plan", route_after_escalate_plan, {"dispatch": "dispatch", "delivery": "delivery"})
     graph.add_conditional_edges(
             "dispatch",
             route_after_dispatch, {
