@@ -24,71 +24,156 @@ from src.api.schemas import (
     ResolveRequest,
     TaskCreateRequest,
     TaskStatusResponse,
+    ChatRequest,
 )
 from src.api.state import get_state
 from src.schemas.models import ApprovalLevel, EscalationEvent, new_id
+from fastapi import WebSocket
+from src.api.websocket_manager import manager
 
 app = FastAPI(title="Agent Orchestration API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],  # adjust to your React dev server
+    allow_origins=["http://localhost:5173", "http://localhost:3000"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
 def _process_result(thread_id: str, result: dict) -> TaskStatusResponse:
-    """
-    Shared handling for whatever app.invoke() returns -- either the graph
-    paused on an interrupt, or it ran to completion (or further along).
+    state = get_state()
 
-    TODO:
-      1. Check `"__interrupt__" in result`.
-      2. If paused:
-         - result["__interrupt__"] is a list of Interrupt objects; each
-           has `.value`, which is the dict your node passed to
-           interrupt(...) (i.e. event.model_dump()).
-         - Rebuild it: EscalationEvent(**result["__interrupt__"][0].value)
-         - approval_id = state.queue.submit(event)
-         - state.approval_to_thread[approval_id] = thread_id
-         - record thread_status as "paused", final_output None
-         - return TaskStatusResponse(..., pending_approval_id=approval_id)
-      3. Otherwise:
-         - result is the final state dict -- pull "status" / "final_output"
-           out of it and store + return those.
-    """
-    raise NotImplementedError
+    async def _broadcast(event_type: str, payload: dict):
+        await manager.broadcast({
+            "type": event_type,
+            "payload": payload
+        })
 
+    if "__interrupt__" in result and result["__interrupt__"]:
+        interrupt_obj = result["__interrupt__"][0]
+        event_dict = interrupt_obj.value
+
+        event = EscalationEvent(**event_dict)
+
+        #store in approval queue
+        approval_id = state.queue.submit(event)
+        state.approval_to_thread[approval_id] = thread_id
+
+        #record thread status
+        state.thread_status[thread_id] = {
+            "status": "paused",
+            "final_output": None,
+            "pending_approval_id": approval_id, 
+        }
+
+        return TaskStatusResponse(
+            thread_id=thread_id,
+            status="paused",
+            final_output=None,
+            pending_approval_id=approval_id,
+        )
+    # graph completed normally:
+    final_status = result.get("status", "completed")
+    final_output = result.get("final_output")
+
+    state.thread_status[thread_id] = {
+        "status": final_status,
+        "final_output": final_output,
+        "pending_approval_id": None,
+    }
+
+    return TaskStatusResponse(
+        thread_id=thread_id,
+        status=final_status,
+        final_output=final_output,
+        pending_approval_id=None,
+    )
+
+
+# CHAT ENDPOINT
+
+@app.post("/chat", response_model=TaskStatusResponse)
+def chat(body: ChatRequest):
+    state = get_state()
+    thread_id = new_id()
+
+    result = state.graph.invoke(
+        {"original_request": body.message},
+        config = state.config_for(thread_id)
+    )
+
+    return _process_result(thread_id, result)
+
+@app.websocket("/ws")
+async def websocket_endpoint(ws: WebSocket):
+    await manager.connect(ws)
+    try:
+        while True:
+            await ws.receive_text()  # keep connection alive
+    except Exception:
+        manager.disconnect(ws)
 
 @app.post("/tasks", response_model=TaskStatusResponse)
 def create_task(body: TaskCreateRequest):
     state = get_state()
     thread_id = new_id()
-    # TODO: result = state.graph.invoke({"original_request": body.request}, config=state.config_for(thread_id))
-    # TODO: return _process_result(thread_id, result)
-    raise NotImplementedError
+    result = state.graph.invoke({"original_request": body.request}, config=state.config_for(thread_id))
+    return _process_result(thread_id, result)
+
 
 
 @app.get("/tasks/{thread_id}", response_model=TaskStatusResponse)
 def get_task(thread_id: str):
     state = get_state()
-    # TODO: look up state.thread_status[thread_id]; raise HTTPException(404, ...) if missing
-    raise NotImplementedError
+    if thread_id not in state.thread_status:
+        raise HTTPException(404, "task not found")
+
+    ts = state.thread_status[thread_id]
+
+    return TaskStatusResponse(
+        thread_id=thread_id,
+        status=ts["status"],
+        final_output=ts["final_output"],
+        pending_approval_id=ts["pending_approval_id"],
+    )
 
 
 @app.get("/approvals", response_model=list[ApprovalSummary])
 def list_approvals():
     state = get_state()
-    # TODO: map state.queue.list_pending() -> list[ApprovalSummary]
-    raise NotImplementedError
+    pending = state.queue.list_pending()
+
+    return [
+        ApprovalSummary(
+            id=e.id,
+            task_id=e.task_id,
+            level=e.level,
+            reason=e.reason,
+            created_at=e.created_at,
+        )
+        for e in pending
+    ]
 
 
 @app.get("/approvals/{approval_id}", response_model=ApprovalDetail)
 def get_approval(approval_id: str):
     state = get_state()
-    # TODO: state.queue.get(approval_id); 404 if None; map to ApprovalDetail
-    raise NotImplementedError
+    event = state.queue.get(approval_id)
+
+    if event is None:
+        raise HTTPException(404, "approval not found")
+
+    return ApprovalDetail(
+        id=event.id,
+        task_id=event.task_id,
+        level=event.level,
+        reason=event.reason,
+        context=event.context,
+        created_at=event.created_at,
+        resolution=event.resolution,
+        resolution_notes=event.resolution_notes,
+    )
 
 
 @app.post("/approvals/{approval_id}/resolve", response_model=TaskStatusResponse)
@@ -99,12 +184,34 @@ def resolve_approval(approval_id: str, body: ResolveRequest):
         raise HTTPException(404, "approval not found")
     thread_id = state.approval_to_thread[approval_id]
 
-    # TODO: build resume_payload based on event.level:
-    #   APPROVE_PLAN   -> {"approved": body.decision == "approved", "notes": body.notes}
-    #   APPROVE_ACTION -> {"action": body.decision, "notes": body.notes, "output": body.output or ""}
+    # Build resume payload based on approval level
+    if event.level == ApprovalLevel.APPROVE_PLAN:
+        resume_payload = {
+            "approved": body.decision == "approved",
+            "notes": body.notes,
+        }
 
-    # TODO: state.queue.resolve(approval_id, resolution=body.decision, notes=body.notes)  # bookkeeping only
+    elif event.level == ApprovalLevel.APPROVE_ACTION:
+        resume_payload = {
+            "action": body.decision,
+            "notes": body.notes,
+            "output": body.output or "",
+        }
 
-    # TODO: result = state.graph.invoke(Command(resume=resume_payload), config=state.config_for(thread_id))
-    # TODO: return _process_result(thread_id, result)
-    raise NotImplementedError
+    else:
+        raise HTTPException(400, f"Unknown approval level {event.level}")
+
+    # Bookkeeping
+    state.queue.resolve(
+        approval_id,
+        resolution=body.decision,
+        notes=body.notes,
+    )
+
+    # Resume graph
+    result = state.graph.invoke(
+        Command(resume=resume_payload),
+        config=state.config_for(thread_id)
+    )
+
+    return _process_result(thread_id, result)

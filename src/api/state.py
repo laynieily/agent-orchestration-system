@@ -21,13 +21,12 @@ from src.tools.builtin import build_default_registry
 
 class AppState:
     def __init__(self) -> None:
-        # TODO: wire up the same pieces your test scripts already build:
-        #   self.tools = build_default_registry()
-        #   self.memory = WorkingMemoryStore()
-        #   self.long_term_memory = LongTermMemoryStore(persist_dir=...)
-        #   self.graph = build_graph(self.tools, self.memory, self.long_term_memory,
-        #                             get_llm("planner"), get_llm("specialist"), get_llm("reviewer"))
-        #   self.queue = ApprovalQueue()
+        self.tools = build_default_registry()
+        self.memory = WorkingMemoryStore()
+        self.long_term_memory = LongTermMemoryStore(persist_dir=...)
+        self.graph = build_graph(self.tools, self.memory, self.long_term_memory,
+                                  get_llm("planner"), get_llm("specialist"), get_llm("reviewer"))
+        self.queue = ApprovalQueue()
         self.thread_status: dict[str, dict] = {}       # thread_id -> {"status": ..., "final_output": ...}
         self.approval_to_thread: dict[str, str] = {}   # approval_id -> thread_id
         raise NotImplementedError

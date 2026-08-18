@@ -36,3 +36,6 @@ class ResolveRequest(BaseModel):
     decision: str                   # "approved"/"rejected" (plan) or "accept"/"take_over"/"abort" (subtask)
     notes: str = ""
     output: Optional[str] = None    # only used when decision == "take_over"
+
+class ChatRequest(BaseModel):
+    message: str
