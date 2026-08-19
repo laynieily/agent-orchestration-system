@@ -1,8 +1,17 @@
 import { useState } from "react";
 
+const API_BASE = "http://127.0.0.1:8000"; // TODO: swap for a Vite proxy path if you set one up later
+
 interface Message {
   role: "user" | "assistant";
   content: string;
+}
+
+interface TaskStatusResponse {
+  thread_id: string;
+  status: string;
+  final_output: string | null;
+  pending_approval_id: string | null;
 }
 
 export default function Chat() {
@@ -14,22 +23,25 @@ export default function Chat() {
 
     const userMessage: Message = { role: "user", content: input };
     setMessages((prev) => [...prev, userMessage]);
+    setInput("");
 
-    const res = await fetch("/api/chat", {
+    const res = await fetch(`${API_BASE}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: input }),
+      body: JSON.stringify({ message: userMessage.content }),
     });
 
-    const data = await res.json();
+    const data: TaskStatusResponse = await res.json();
 
     const assistantMessage: Message = {
       role: "assistant",
-      content: data.reply,
+      content:
+        data.status === "paused"
+          ? "This request needs human approval — check the Approvals page."
+          : data.final_output ?? "(no output)",
     };
 
     setMessages((prev) => [...prev, assistantMessage]);
-    setInput("");
   }
 
   return (

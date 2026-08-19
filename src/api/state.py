@@ -29,7 +29,7 @@ class AppState:
         self.queue = ApprovalQueue()
         self.thread_status: dict[str, dict] = {}       # thread_id -> {"status": ..., "final_output": ...}
         self.approval_to_thread: dict[str, str] = {}   # approval_id -> thread_id
-        raise NotImplementedError
+
 
     def config_for(self, thread_id: str) -> dict:
         return {"configurable": {"thread_id": thread_id}, "recursion_limit": 50}

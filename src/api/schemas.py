@@ -26,10 +26,13 @@ class ApprovalSummary(BaseModel):
     task_id: str
     level: str
     reason: str
+    created_at: float
 
 
 class ApprovalDetail(ApprovalSummary):
     context: dict
+    resolution: Optional[str] = None
+    resolution_notes: str = ""
 
 
 class ResolveRequest(BaseModel):

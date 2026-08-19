@@ -96,7 +96,7 @@ def _process_result(thread_id: str, result: dict) -> TaskStatusResponse:
 @app.post("/chat", response_model=TaskStatusResponse)
 def chat(body: ChatRequest):
     state = get_state()
-    thread_id = new_id()
+    thread_id = new_id("thread")
 
     result = state.graph.invoke(
         {"original_request": body.message},
@@ -117,7 +117,7 @@ async def websocket_endpoint(ws: WebSocket):
 @app.post("/tasks", response_model=TaskStatusResponse)
 def create_task(body: TaskCreateRequest):
     state = get_state()
-    thread_id = new_id()
+    thread_id = new_id("thread")
     result = state.graph.invoke({"original_request": body.request}, config=state.config_for(thread_id))
     return _process_result(thread_id, result)
 
