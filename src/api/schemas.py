@@ -33,6 +33,7 @@ class ApprovalDetail(ApprovalSummary):
     context: dict
     resolution: Optional[str] = None
     resolution_notes: str = ""
+    resolved_at: Optional[float] = None
 
 
 class ResolveRequest(BaseModel):
@@ -42,3 +43,6 @@ class ResolveRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
+
+class TaskHistoryItem(TaskStatusResponse):
+    request: str

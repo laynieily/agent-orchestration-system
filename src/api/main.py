@@ -43,28 +43,21 @@ app.add_middleware(
 
 def _process_result(thread_id: str, result: dict) -> TaskStatusResponse:
     state = get_state()
-
-    async def _broadcast(event_type: str, payload: dict):
-        await manager.broadcast({
-            "type": event_type,
-            "payload": payload
-        })
+    original_request = result.get("original_request", "")
 
     if "__interrupt__" in result and result["__interrupt__"]:
         interrupt_obj = result["__interrupt__"][0]
         event_dict = interrupt_obj.value
-
         event = EscalationEvent(**event_dict)
 
-        #store in approval queue
         approval_id = state.queue.submit(event)
         state.approval_to_thread[approval_id] = thread_id
 
-        #record thread status
         state.thread_status[thread_id] = {
             "status": "paused",
             "final_output": None,
-            "pending_approval_id": approval_id, 
+            "pending_approval_id": approval_id,
+            "request": original_request,
         }
 
         return TaskStatusResponse(
@@ -73,7 +66,7 @@ def _process_result(thread_id: str, result: dict) -> TaskStatusResponse:
             final_output=None,
             pending_approval_id=approval_id,
         )
-    # graph completed normally:
+
     final_status = result.get("status", "completed")
     final_output = result.get("final_output")
 
@@ -81,6 +74,7 @@ def _process_result(thread_id: str, result: dict) -> TaskStatusResponse:
         "status": final_status,
         "final_output": final_output,
         "pending_approval_id": None,
+        "request": original_request,
     }
 
     return TaskStatusResponse(
@@ -104,6 +98,20 @@ def chat(body: ChatRequest):
     )
 
     return _process_result(thread_id, result)
+
+@app.get("/tasks", response_model=list[TaskHistoryItem])
+def list_tasks():
+    state = get_state()
+    return [
+        TaskHistoryItem(
+            thread_id=tid,
+            status=info["status"],
+            final_output=info["final_output"],
+            pending_approval_id=info["pending_approval_id"],
+            request=info.get("request", ""),
+        )
+        for tid, info in state.thread_status.items()
+    ]
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
@@ -156,6 +164,27 @@ def list_approvals():
     ]
 
 
+@app.get("/approvals/history", response_model=list[ApprovalDetail])
+def list_approval_history(resolution: str | None = None):
+    state = get_state()
+    resolved = state.queue.list_resolved(resolution)
+
+    return [
+        ApprovalDetail(
+            id=e.id,
+            task_id=e.task_id,
+            level=e.level,
+            reason=e.reason,
+            context=e.context,
+            created_at=e.created_at,
+            resolution=e.resolution,
+            resolution_notes=e.resolution_notes,
+            resolved_at=e.resolved_at,
+        )
+        for e in resolved
+    ]
+
+
 @app.get("/approvals/{approval_id}", response_model=ApprovalDetail)
 def get_approval(approval_id: str):
     state = get_state()
@@ -173,6 +202,7 @@ def get_approval(approval_id: str):
         created_at=event.created_at,
         resolution=event.resolution,
         resolution_notes=event.resolution_notes,
+        resolved_at=event.resolved_at,
     )
 
 

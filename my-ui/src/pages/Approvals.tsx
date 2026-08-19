@@ -40,18 +40,31 @@ export default function Approvals() {
   }
 
   function resolve(id: string, decision: string, output?: string) {
-    fetch(`${API_BASE}/approvals/${id}/resolve`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        decision,
-        notes: notes[id] ?? "",
-        output: output ?? null,
-      }),
-    }).then(() => {
+  fetch(`${API_BASE}/approvals/${id}/resolve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      decision,
+      notes: notes[id] ?? "",
+      output: output ?? null,
+    }),
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const err = await res.text();
+        throw new Error(`resolve failed (${res.status}): ${err}`);
+      }
+      return res.json();
+    })
+    .then((result) => {
+      console.log("resolve result:", result); // status, final_output, pending_approval_id
       setItems((prev) => prev.filter((i) => i.id !== id));
+    })
+    .catch((err) => {
+      console.error(err);
+      alert(err.message); // swap for a nicer toast later
     });
-  }
+}
 
   return (
     <div>

@@ -28,6 +28,14 @@ class ApprovalQueue:
             if evt.resolution is None
         ]
 
+    def list_resolved(self, resolution: Optional[str] = None) -> list[EscalationEvent]:
+        return [
+            evt
+            for evt in self._pending.values()
+            if evt.resolution is not None
+            and (resolution is None or evt.resolution == resolution)
+        ]
+
     def get(self, approval_id: str) -> Optional[EscalationEvent]:
         return self._pending.get(approval_id)
        
