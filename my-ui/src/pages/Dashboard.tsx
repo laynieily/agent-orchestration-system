@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { useTaskEvents } from "../hooks/useTaskEvents";
 
 const API_BASE = "http://127.0.0.1:8000";
 
@@ -17,6 +18,8 @@ export default function Dashboard() {
   useEffect(() => {
     fetchHistory();
   }, []);
+
+  useTaskEvents(() => fetchHistory());
 
   function fetchHistory() {
     fetch(`${API_BASE}/tasks`)

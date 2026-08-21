@@ -14,6 +14,9 @@ Flow:
 """
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from langgraph.types import Command
@@ -23,6 +26,7 @@ from src.api.schemas import (
     ApprovalSummary,
     ResolveRequest,
     TaskCreateRequest,
+    TaskHistoryItem,
     TaskStatusResponse,
     ChatRequest,
 )
@@ -31,7 +35,15 @@ from src.schemas.models import ApprovalLevel, EscalationEvent, new_id
 from fastapi import WebSocket
 from src.api.websocket_manager import manager
 
-app = FastAPI(title="Agent Orchestration API")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Route handlers below are sync `def`s, which FastAPI runs in a worker
+    # thread -- broadcast_threadsafe needs the loop to hop back to it.
+    manager.bind_loop(asyncio.get_running_loop())
+    yield
+
+
+app = FastAPI(title="Agent Orchestration API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -60,6 +72,14 @@ def _process_result(thread_id: str, result: dict) -> TaskStatusResponse:
             "request": original_request,
         }
 
+        manager.broadcast_threadsafe({
+            "type": "task_update",
+            "thread_id": thread_id,
+            "status": "paused",
+            "final_output": None,
+            "pending_approval_id": approval_id,
+        })
+
         return TaskStatusResponse(
             thread_id=thread_id,
             status="paused",
@@ -76,6 +96,14 @@ def _process_result(thread_id: str, result: dict) -> TaskStatusResponse:
         "pending_approval_id": None,
         "request": original_request,
     }
+
+    manager.broadcast_threadsafe({
+        "type": "task_update",
+        "thread_id": thread_id,
+        "status": final_status,
+        "final_output": final_output,
+        "pending_approval_id": None,
+    })
 
     return TaskStatusResponse(
         thread_id=thread_id,

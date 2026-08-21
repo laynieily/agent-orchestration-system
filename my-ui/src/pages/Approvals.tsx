@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTaskEvents } from "../hooks/useTaskEvents";
 
 const API_BASE = "http://127.0.0.1:8000"; // TODO: swap for a Vite proxy path if you set one up later
 
@@ -23,13 +24,19 @@ export default function Approvals() {
   const [outputs, setOutputs] = useState<Record<string, string>>({});
 
   useEffect(() => {
+    fetchApprovals();
+  }, []);
+
+  useTaskEvents(() => fetchApprovals());
+
+  function fetchApprovals() {
     fetch(`${API_BASE}/approvals`)
       .then((res) => res.json())
       .then((data: ApprovalSummary[]) => {
         setItems(data);
         data.forEach((item) => fetchDetail(item.id));
       });
-  }, []);
+  }
 
   function fetchDetail(id: string) {
     fetch(`${API_BASE}/approvals/${id}`)
