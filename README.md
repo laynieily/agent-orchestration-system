@@ -11,8 +11,8 @@ Human-in-the-Loop).
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Agent hierarchy, task decomposition, tool registry, LangGraph state machine | Completed |
-| 2 | Short-term (Redis) + long-term (ChromaDB) memory | Not started |
-| 3 | Human-in-the-loop approval queue + review UI | Not started |
+| 2 | Short-term (Redis) + long-term (ChromaDB) memory | Completed |
+| 3 | Human-in-the-loop approval queue + review UI | Completed |
 | 4 | OpenTelemetry tracing + trace explorer UI | Not started |
 | 5 | Docker Compose integration + e2e demo | Not started |
 | 6 | Portfolio polish | Not started |
