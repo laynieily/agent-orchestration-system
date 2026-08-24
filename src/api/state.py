@@ -9,6 +9,7 @@ That's fine for this project; a persistent checkpointer is a Phase 5 concern.
 """
 from __future__ import annotations
 
+import threading
 from typing import Optional
 
 from src.approval.queue import ApprovalQueue
@@ -30,9 +31,27 @@ class AppState:
         self.thread_status: dict[str, dict] = {}       # thread_id -> {"status": ..., "final_output": ...}
         self.approval_to_thread: dict[str, str] = {}   # approval_id -> thread_id
 
+        # Guards against concurrent graph.invoke() calls on the same thread_id
+        # (e.g. a double-click on Approve/Take Over/Abort before the first
+        # request returns) -- MemorySaver doesn't serialize resumes itself,
+        # and running the same thread twice in parallel corrupts its state.
+        self._busy_lock = threading.Lock()
+        self._busy_threads: set[str] = set()
+
 
     def config_for(self, thread_id: str) -> dict:
         return {"configurable": {"thread_id": thread_id}, "recursion_limit": 50}
+
+    def try_acquire_thread(self, thread_id: str) -> bool:
+        with self._busy_lock:
+            if thread_id in self._busy_threads:
+                return False
+            self._busy_threads.add(thread_id)
+            return True
+
+    def release_thread(self, thread_id: str) -> None:
+        with self._busy_lock:
+            self._busy_threads.discard(thread_id)
 
 
 state: Optional[AppState] = None

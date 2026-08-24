@@ -33,7 +33,14 @@ Instructions:
     - whether the output matches the expected format,
     - whether it fufills the subtask description,
     - what should be improved if needed.
-3. Set "approved" to true ONLY if the output meets the expected format AND the quality score is high.
+3. Set "approved" to true if the output is a genuine, substantive attempt that
+   covers the core of the description in roughly the right format -- even if
+   it's not exhaustive, could cite more sources, or is missing a minor nicety.
+   This is one step in a longer pipeline with a limited retry budget, not the
+   final deliverable, so don't hold it to publication standard.
+   Set "approved" to false only when the output is empty, off-topic, in the
+   wrong format entirely, factually wrong in a way that matters, or otherwise
+   unusable as input to the next step.
 
 You MUST return a JSON object matching the ReviewResult schema
 

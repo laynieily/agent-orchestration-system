@@ -1,100 +1,125 @@
 import { useEffect, useState } from "react";
+import { RefreshIcon } from "../components/icons";
+import { button, card, emptyState } from "../lib/styles";
 
-interface EscalationEvent {
+const API_BASE = "http://127.0.0.1:8001";
+
+interface ApprovalDetail {
   id: string;
   task_id: string;
-  reason: string;
   level: string;
+  reason: string;
+  created_at: number;
   context: Record<string, any>;
   resolution: string | null;
-  resolution_notes: string | null;
-  created_at: number;
+  resolution_notes: string;
+  resolved_at: number | null;
 }
 
+const RESOLUTION_OPTIONS = [
+  { label: "All", value: "" },
+  { label: "Approved", value: "approved" },
+  { label: "Rejected", value: "rejected" },
+  { label: "Accepted", value: "accept" },
+  { label: "Took Over", value: "take_over" },
+  { label: "Aborted", value: "abort" },
+];
+
 export default function Escalations() {
-  const [items, setItems] = useState<EscalationEvent[]>([]);
-  const [notes, setNotes] = useState<Record<string, string>>({});
+  const [items, setItems] = useState<ApprovalDetail[]>([]);
+  const [filter, setFilter] = useState<string>("");
 
-  // Fetch pending escalations
   useEffect(() => {
-    fetch("/api/escalations/pending")
-      .then((res) => res.json())
-      .then((data) => setItems(data));
-  }, []);
+    fetchHistory();
+  }, [filter]);
 
-  function resolve(id: string, action: string, notesValue?: string) {
-    fetch(`/api/escalations/${id}/resolve`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        action,
-        notes: notesValue ?? null,
-      }),
-    }).then(() => {
-      setItems((prev) => prev.filter((i) => i.id !== id));
-    });
+  function fetchHistory() {
+    const url = filter
+      ? `${API_BASE}/approvals/history?resolution=${filter}`
+      : `${API_BASE}/approvals/history`;
+
+    fetch(url)
+      .then((res) => res.json())
+      .then((data: ApprovalDetail[]) => setItems(data))
+      .catch((err) => console.error("failed to load escalation history", err));
   }
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-4">Escalations</h1>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
+            Escalation History
+          </h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Past decisions on escalated plans and subtasks.
+          </p>
+        </div>
+        <button type="button" onClick={fetchHistory} className={button.secondary}>
+          <RefreshIcon className="h-4 w-4" />
+          Refresh
+        </button>
+      </div>
+
+      <div className="mb-4 flex flex-wrap gap-2">
+        {RESOLUTION_OPTIONS.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => setFilter(opt.value)}
+            className={filter === opt.value ? button.primary : button.secondary}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
 
       {items.length === 0 && (
-        <p className="text-gray-600">No pending escalations.</p>
+        <div className={emptyState}>No resolved escalations yet.</div>
       )}
 
-      {items.map((item) => (
-        <div
-          key={item.id}
-          className="bg-white shadow p-4 rounded mb-4 border border-gray-200"
-        >
-          <h2 className="text-xl font-semibold mb-2">
-            Task {item.task_id} — Level {item.level}
-          </h2>
+      <div className="space-y-4">
+        {items.map((item) => (
+          <div key={item.id} className={card}>
+            <div className="mb-3 flex items-center justify-between gap-4">
+              <h2 className="text-lg font-semibold text-slate-900">
+                Task {item.task_id}
+              </h2>
+              <div className="flex gap-2">
+                <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600 ring-1 ring-inset ring-slate-500/15">
+                  {item.level}
+                </span>
+                <span className="shrink-0 rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 ring-1 ring-inset ring-indigo-600/20">
+                  {item.resolution}
+                </span>
+              </div>
+            </div>
 
-          <p className="text-gray-700 mb-2">
-            <strong>Reason:</strong> {item.reason}
-          </p>
+            <p className="mb-2 text-sm text-slate-700">
+              <span className="font-medium text-slate-900">Reason: </span>
+              {item.reason}
+            </p>
 
-          <pre className="bg-gray-100 p-3 rounded text-sm mb-3 overflow-auto">
-            {JSON.stringify(item.context, null, 2)}
-          </pre>
+            {item.resolution_notes && (
+              <p className="mb-3 text-sm text-slate-700">
+                <span className="font-medium text-slate-900">Notes: </span>
+                {item.resolution_notes}
+              </p>
+            )}
 
-          <textarea
-            placeholder="Optional notes (required for take_over)"
-            className="w-full p-2 border rounded mb-3"
-            value={notes[item.id] ?? ""}
-            onChange={(e) =>
-              setNotes({ ...notes, [item.id]: e.target.value })
-            }
-          />
+            <p className="mb-3 text-xs text-slate-500">
+              Resolved{" "}
+              {item.resolved_at
+                ? new Date(item.resolved_at * 1000).toLocaleString()
+                : "—"}
+            </p>
 
-          <div className="flex gap-3">
-            <button
-              onClick={() => resolve(item.id, "accept")}
-              className="px-4 py-2 bg-green-600 text-white rounded"
-            >
-              Accept
-            </button>
-
-            <button
-              onClick={() => resolve(item.id, "abort")}
-              className="px-4 py-2 bg-red-600 text-white rounded"
-            >
-              Abort
-            </button>
-
-            <button
-              onClick={() =>
-                resolve(item.id, "take_over", notes[item.id] ?? "")
-              }
-              className="px-4 py-2 bg-blue-600 text-white rounded"
-            >
-              Take Over
-            </button>
+            <pre className="overflow-auto rounded-lg bg-slate-900 p-3 text-xs text-slate-100">
+              {JSON.stringify(item.context, null, 2)}
+            </pre>
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }

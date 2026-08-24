@@ -15,6 +15,7 @@ import requests
 from pydantic import BaseModel, Field
 from bs4 import BeautifulSoup
 
+from src.schemas.models import SpecialistName
 from src.tools.registry import ToolRegistry, ToolSpec
 
 # All file/db operations are sandboxed under this directory.
@@ -55,6 +56,9 @@ def web_search(query: str, max_results: int = 5) -> list[dict[str, str]]:
         results = []
 
         for body in soup.select(".result__body"):
+            if len(results) >= max_results:
+                break
+
             title_el = body.select_one(".result__title")
             snippet_el = body.select_one(".result__snippet")
             link_el = body.select_one("a.result__a")
@@ -68,8 +72,8 @@ def web_search(query: str, max_results: int = 5) -> list[dict[str, str]]:
                 "url": link_el.get("href", ""),
             })
 
-            if results:
-                return results
+        if results:
+            return results
     except Exception:
         pass
 
@@ -232,7 +236,7 @@ def build_default_registry() -> ToolRegistry:
         description="DuckDuckGo HTML search scraper",
         func=web_search,
         input_schema=WebSearchInput,
-        allowed_agents=["researcher"],
+        allowed_agents=[SpecialistName.RESEARCHER.value],
         rate_limit_per_minute=15,
     ))
 
@@ -259,7 +263,7 @@ def build_default_registry() -> ToolRegistry:
         description="Execute Python code in sandbox",
         func=code_execution,
         input_schema=CodeExecutionInput,
-        allowed_agents=["coder", "data_analysis"],
+        allowed_agents=[SpecialistName.CODE_EXECUTION.value, SpecialistName.DATA_ANALYSIS.value],
         rate_limit_per_minute=20,
     ))
 
@@ -268,7 +272,7 @@ def build_default_registry() -> ToolRegistry:
         description="Query in-memory SQLite demo DB",
         func=db_query,
         input_schema=DbQueryInput,
-        allowed_agents=["data_analysis"],
+        allowed_agents=[SpecialistName.DATA_ANALYSIS.value],
         rate_limit_per_minute=40,
     ))
 
@@ -277,7 +281,7 @@ def build_default_registry() -> ToolRegistry:
         description="Simple HTTP GET/POST wrapper",
         func=api_call,
         input_schema=ApiCallInput,
-        allowed_agents=["research", "data_analysis"],
+        allowed_agents=[SpecialistName.RESEARCHER.value, SpecialistName.DATA_ANALYSIS.value],
         rate_limit_per_minute=20,
     ))
 

@@ -26,7 +26,7 @@ from src.agents.reviewer import ReviewerAgent
 from src.agents.specialist import SPECIALIST_DISPATCH
 from src.agents.supervisor import SupervisorAgent
 from src.graph.state import OrchestratorState
-from src.schemas.models import ApprovalLevel, EscalationEvent, SpecialistResult
+from src.schemas.models import ApprovalLevel, EscalationEvent, ExecutionPlan, SpecialistResult
 from src.tools.registry import ToolRegistry
 
 from src.memory.working_memory import WorkingMemoryStore
@@ -36,8 +36,8 @@ from langgraph.types import interrupt, Command
 import time
 
 
-PLAN_CONFIDENCE_THRESHOLD = float(os.getenv("PLAN_CONFIDENCE_THRESHOLD", "0.6"))
-MAX_SUBTASK_RETRIES = int(os.getenv("MAX_SUBTASK_RETRIES", "2"))
+PLAN_CONFIDENCE_THRESHOLD = float(os.getenv("PLAN_CONFIDENCE_THRESHOLD", "0.45"))
+MAX_SUBTASK_RETRIES = int(os.getenv("MAX_SUBTASK_RETRIES", "3"))
 
 
 from src.memory.long_term_memory import LongTermMemoryStore
@@ -82,18 +82,41 @@ def build_graph(tools: ToolRegistry, memory: WorkingMemoryStore, long_term_memor
         )
 
         decision = interrupt(event.model_dump())
+        action = decision.get("action", "rejected")
 
         resolved_event = event.model_copy(update={
-            "resolution": "approved" if decision.get("approved") else "rejected",
+            "resolution": action,
             "resolution_notes": decision.get("notes", ""),
             "resolved_at": time.time(),
         })
-        return {
+
+        update: dict = {
             "escalations": state.get("escalations", []) + [resolved_event],
-            "plan_approved": decision.get("approved", False),
-            "status": "running" if decision.get("approved", False) else "plan_rejected",
-            }
-        
+        }
+
+        if action == "take_over":
+            # Human edited the plan directly -- keep the original task_id /
+            # original_request so downstream memory + bookkeeping still line up.
+            edited_plan_data = dict(decision.get("edited_plan") or {})
+            edited_plan_data["task_id"] = plan.task_id
+            edited_plan_data["original_request"] = plan.original_request
+            edited_plan = ExecutionPlan(**edited_plan_data)
+            memory.set(plan.task_id, "plan", edited_plan.model_dump())
+            update["plan"] = edited_plan
+            update["plan_approved"] = True
+            update["status"] = "running"
+        elif action == "approved":
+            update["plan_approved"] = True
+            update["status"] = "running"
+        elif action == "abort":
+            update["plan_approved"] = False
+            update["status"] = "aborted"
+        else:  # rejected
+            update["plan_approved"] = False
+            update["status"] = "plan_rejected"
+
+        return update
+
 
     def route_after_escalate_plan(state: OrchestratorState) -> Literal["dispatch", "delivery"]:
         return "dispatch" if state.get("plan_approved") else "delivery"

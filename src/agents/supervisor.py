@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
-from src.schemas.models import ExecutionPlan, SpecialistResult
+from src.schemas.models import ExecutionPlan, SpecialistResult, new_id
 
 # prompt needs to instruct the model to:
 #   - break the request into subtasks, each assigned to one specialist
@@ -76,10 +76,26 @@ class SupervisorAgent:
         )
         structured_llm = self.llm.with_structured_output(ExecutionPlan)
         plan = structured_llm.invoke(prompt)
-        plan = plan.model_copy(update={"original_request": request})
         #    -- overwrite this yourself, don't trust the model's echo.
         #    You already saw exactly this bug with MockLLM in testing --
-        #    real models can do the same thing.
+        #    real models can do the same thing. Same applies to task_id and
+        #    subtask ids: the prompt says the model "may leave this blank",
+        #    but real models have emitted "" and even the literal 2-char
+        #    string '""' instead of actually omitting the field, so a
+        #    truthiness check isn't reliable -- task_id is pure system
+        #    bookkeeping the model has no legitimate reason to set, so
+        #    always regenerate it. Subtask ids ARE referenced by the model
+        #    itself (depends_on/required_inputs), so only replace ones that
+        #    came back genuinely empty rather than regenerating all of them.
+        subtasks = [
+            sub if sub.id else sub.model_copy(update={"id": new_id("sub")})
+            for sub in plan.subtasks
+        ]
+        plan = plan.model_copy(update={
+            "original_request": request,
+            "task_id": new_id("task"),
+            "subtasks": subtasks,
+        })
         return plan
 
     def synthesize(self, plan: ExecutionPlan, results: dict[str, SpecialistResult]) -> str:
